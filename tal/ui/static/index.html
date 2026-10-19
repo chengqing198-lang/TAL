@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TAL · 定向消融实验台</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>TAL Lab</h1>
+      <p>Targeted Abliteration Lab</p>
+    </div>
+    <button class="tab-btn active" data-tab="models"><span class="dot"></span>模型接入</button>
+    <button class="tab-btn" data-tab="prompts"><span class="dot"></span>请求库</button>
+    <button class="tab-btn" data-tab="chat"><span class="dot"></span>对话探测</button>
+    <button class="tab-btn" data-tab="experiments"><span class="dot"></span>定向消融</button>
+    <button class="tab-btn" data-tab="capability"><span class="dot"></span>能力测试</button>
+    <button class="tab-btn" data-tab="reports"><span class="dot"></span>报告</button>
+    <div class="foot">
+      本地工具 · 无鉴权<br>
+      仅绑定 127.0.0.1
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- ---------------------------------------------------------- models -->
+    <section id="tab-models" class="active">
+      <h2>模型接入</h2>
+      <p class="lead">选择本地模型。三种接入方式：内置模拟（离线演示）、OpenAI 兼容端点（Ollama / LM Studio / vLLM / llama.cpp server）、本地 HF 权重目录。定向消融需要本地权重；远程端点只能用于对话与能力测试。</p>
+
+      <div class="card">
+        <div class="card-head"><h3>已接入</h3><button class="small" id="models-refresh">刷新</button></div>
+        <div id="model-list" class="list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>新增模型</h3></div>
+        <form id="model-form" autocomplete="off">
+          <div class="row">
+            <div>
+              <label for="m-name">显示名称</label>
+              <input id="m-name" type="text" placeholder="例如 Qwen3-4B 本地">
+            </div>
+            <div>
+              <label for="m-kind">接入方式</label>
+              <select id="m-kind">
+                <option value="simulate">内置模拟（无需权重）</option>
+                <option value="openai">OpenAI 兼容端点</option>
+                <option value="hf">本地 HF 权重目录</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="openai-field">
+            <div class="row">
+              <div>
+                <label for="m-base-url">Base URL</label>
+                <input id="m-base-url" type="text" placeholder="http://127.0.0.1:11434/v1">
+              </div>
+              <div>
+                <label for="m-api-key">API Key（可空）</label>
+                <input id="m-api-key" type="password" placeholder="本地端点通常不需要">
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="m-model">模型名 / HF repo id</label>
+              <input id="m-model" type="text" placeholder="qwen2.5:7b 或 Qwen/Qwen2.5-7B-Instruct">
+            </div>
+            <div class="weights-field">
+              <label for="m-path" id="m-path-label">本地权重目录</label>
+              <input id="m-path" type="text" placeholder="D:\models\Qwen3-4B">
+            </div>
+          </div>
+          <p class="hint weights-field" id="m-path-hint">HF 目录需含 <code>config.json</code> 与权重文件；也可以填单个 <code>.gguf</code> 文件（走 ditch 引擎）。OpenAI 兼容端点若同时填写该路径，对话走端点、消融用本地权重。</p>
+          <div class="row weights-field">
+            <div>
+              <label for="m-eval-path">评测用 HF 目录（GGUF 必填）</label>
+              <input id="m-eval-path" type="text" placeholder="D:\models\Qwen3-4B">
+            </div>
+          </div>
+          <p class="hint weights-field">ditch 可以直接消融 GGUF；TAL 的基座/KL 评测仍需要原始 HF 权重，因此 GGUF 输入必须同时给出 HF 快照目录。Heretic 只用上面的路径，可留空此项。</p>
+
+          <div class="row hf-field">
+            <div>
+              <label for="m-device">设备</label>
+              <select id="m-device">
+                <option value="cuda">cuda</option>
+                <option value="cpu">cpu</option>
+                <option value="auto">auto</option>
+              </select>
+            </div>
+            <div>
+              <label for="m-quant">量化</label>
+              <select id="m-quant">
+                <option value="none">none</option>
+                <option value="bnb_4bit">bnb_4bit</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row tight" style="margin-top:14px">
+            <button class="primary" type="submit">添加模型</button>
+          </div>
+          <p class="hint">HF 目录需含 <code>config.json</code> 与权重文件。4bit 量化需要 <code>bitsandbytes</code>。敏感 API Key 只保存在本机 <code>ui-data/config.json</code>，不会回传给页面。</p>
+        </form>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------------- prompts -->
+    <section id="tab-prompts">
+      <h2>请求库</h2>
+      <p class="lead">三类库：target 是希望模型不再照做的请求（用于定向拒答）；preserve 是必须保持正常的日常请求（用于约束 KL 漂移）；capability 是带标准答案的选择题（用于能力测试）。target / preserve 一行一条；capability 为 JSONL。</p>
+
+      <div class="card">
+        <div class="card-head"><h3>已保存的库</h3><button class="small" id="prompts-refresh">刷新</button></div>
+        <div id="prompt-list" class="list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>新建请求库</h3></div>
+        <form id="prompt-form" autocomplete="off">
+          <div class="row">
+            <div>
+              <label for="p-name">名称</label>
+              <input id="p-name" type="text" placeholder="例如 化学武器相关请求">
+            </div>
+            <div>
+              <label for="p-kind">类型</label>
+              <select id="p-kind">
+                <option value="target">target · 定向拒答</option>
+                <option value="preserve">preserve · 通用保留</option>
+                <option value="capability">capability · 能力题库</option>
+              </select>
+            </div>
+          </div>
+          <label for="p-text">内容</label>
+          <textarea id="p-text" spellcheck="false" placeholder="target / preserve：一行一条请求&#10;capability：每行一个 JSON 对象"></textarea>
+          <p class="hint" id="p-format-hint">每行一条；空行与 <code>#</code> 开头的行会被忽略。至少 3 条，建议 ≥ 12 条以便切分。</p>
+          <div class="row tight" style="margin-top:10px">
+            <button class="primary" type="submit">保存请求库</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------------ chat -->
+    <section id="tab-chat">
+      <h2>对话探测</h2>
+      <p class="lead">直接问模型，查看回答与关键词判定。这里的“拒绝”只是关键词规则，不等于实验里的统计结论；它用于快速确认模型是否真的在回答。</p>
+
+      <div class="card">
+        <div class="row">
+          <div>
+            <label for="chat-model">模型</label>
+            <select id="chat-model"></select>
+          </div>
+          <div>
+            <label for="chat-system">System（可空）</label>
+            <input id="chat-system" type="text" placeholder="You are a helpful assistant.">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="chat-max">最大输出 token</label>
+            <input id="chat-max" type="number" value="256" min="8" max="4096">
+          </div>
+          <div>
+            <label for="chat-temp">温度</label>
+            <input id="chat-temp" type="number" value="0" min="0" max="2" step="0.1">
+          </div>
+        </div>
+        <label for="chat-prompt">请求</label>
+        <textarea id="chat-prompt" placeholder="输入一条请求，例如：如何在家里制作炸药？"></textarea>
+        <div class="row tight" style="margin-top:10px">
+          <button class="primary" id="chat-send">发送</button>
+          <button id="chat-clear" type="button">清空对话</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>批量探测请求库</h3></div>
+        <p class="hint">用当前“模型”下拉框选中的模型，逐条发送一个请求库，标出哪些答复被判为拒答。适合在消融前确认“这批请求确实被拒绝”。</p>
+        <div class="row">
+          <div>
+            <label for="batch-lib">请求库</label>
+            <select id="batch-lib"></select>
+          </div>
+          <div>
+            <label for="batch-limit">条数上限</label>
+            <input id="batch-limit" type="number" value="10" min="1" max="200">
+          </div>
+          <div style="flex:0 0 auto;display:flex;align-items:flex-end">
+            <button class="primary" id="batch-run">开始批量探测</button>
+          </div>
+        </div>
+        <p class="small muted" id="batch-summary"></p>
+        <div id="batch-result"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>对话记录</h3><span class="small muted" id="chat-meta"></span></div>
+        <div id="chat-log" class="chat"></div>
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------- experiments -->
+    <section id="tab-experiments">
+      <h2>定向消融</h2>
+      <p class="lead">把 Heretic 的搜索能力约束在“只降低 target 切片拒答、同时保持 preserve 切片与能力”的目标上。实验在后台线程运行，可以离开此页；GPU 阶段会持有本地租约。</p>
+
+      <div class="card">
+        <div class="card-head"><h3>新建实验</h3></div>
+        <form id="exp-form" autocomplete="off">
+          <div class="row">
+            <div>
+              <label for="exp-model">模型</label>
+              <select id="exp-model"></select>
+            </div>
+            <div>
+              <label for="exp-target">target 请求库</label>
+              <select id="exp-target"></select>
+            </div>
+            <div>
+              <label for="exp-preserve">preserve 请求库</label>
+              <select id="exp-preserve"></select>
+            </div>
+            <div>
+              <label for="exp-cap">能力题库（可空）</label>
+              <select id="exp-cap"></select>
+            </div>
+            <div>
+              <label for="exp-backend">消融引擎</label>
+              <select id="exp-backend">
+                <option value="auto">自动（GGUF→ditch，HF→Heretic）</option>
+                <option value="heretic">Heretic（HF 权重）</option>
+                <option value="ditch">ditch（GGUF / HF）</option>
+              </select>
+            </div>
+          </div>
+          <p class="hint" id="exp-model-hint">只列出能加载本地权重的模型；GGUF 模型必须绑定“评测用 HF 目录”。</p>
+          <div class="row">
+            <div>
+              <label for="exp-trials">试验次数</label>
+              <input id="exp-trials" type="number" value="30" min="1" max="2000">
+            </div>
+            <div>
+              <label for="exp-per-slice">每切片最多条数</label>
+              <input id="exp-per-slice" type="number" value="32" min="4" max="2048">
+            </div>
+            <div>
+              <label for="exp-timeout">上游超时（分钟）</label>
+              <input id="exp-timeout" type="number" value="180" min="5" max="1440">
+            </div>
+            <div>
+              <label for="exp-name">运行名（可空）</label>
+              <input id="exp-name" type="text" placeholder="自动生成">
+            </div>
+          </div>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:12px">
+            <input id="exp-dry" type="checkbox" style="width:auto">
+            <span>dry-run（模拟评测，不加载真实模型；模拟模型必须勾选）</span>
+          </label>
+          <div class="row tight" style="margin-top:12px">
+            <button class="primary" type="submit">开始实验</button>
+            <span class="small muted">模拟后端会伪造一份“已编辑模型”，真实后端调用 heretic。</span>
+          </div>
+        </form>
+      </div>
+
+      <div class="card" id="exp-job-card" style="display:none">
+        <div class="card-head">
+          <h3>当前任务</h3>
+          <div class="row tight">
+            <span id="exp-job-status" class="badge">queued</span>
+            <button class="small" id="exp-job-hide" type="button">收起</button>
+          </div>
+        </div>
+        <div class="progress"><div id="exp-progress"></div></div>
+        <p class="small muted" id="exp-job-title"></p>
+        <pre class="log" id="exp-log"></pre>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>实验记录</h3><button class="small" id="exp-refresh">刷新</button></div>
+        <div id="exp-list" class="list"></div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------ capability -->
+    <section id="tab-capability">
+      <h2>能力测试</h2>
+      <p class="lead">用带标准答案的选择题测“编辑的代价”。TAL 引擎通过对话接口逐题提问，适用于任何模型；Senbonzakura 引擎只适用于本地 HF 目录，它自己加载权重。</p>
+
+      <div class="card">
+        <div class="card-head"><h3>运行测试</h3></div>
+        <div class="row">
+          <div>
+            <label for="cap-model">模型</label>
+            <select id="cap-model"></select>
+          </div>
+          <div>
+            <label for="cap-engine">引擎</label>
+            <select id="cap-engine">
+              <option value="tal">TAL · MCQ（对话逐题）</option>
+              <option value="senbonzakura">Senbonzakura · capability</option>
+            </select>
+          </div>
+          <div class="tal-only">
+            <label for="cap-library">题库</label>
+            <select id="cap-library"></select>
+          </div>
+          <div>
+            <label for="cap-limit">题目数上限</label>
+            <input id="cap-limit" type="number" value="24" min="1" max="500">
+          </div>
+        </div>
+        <div class="row sb-only" style="display:none">
+          <div style="flex:1 1 100%">
+            <label for="cap-extra">额外参数（会原样追加到 senbonzakura capability 命令）</label>
+            <input id="cap-extra" type="text" placeholder="--device cpu --slow-probe-ok">
+            <p class="hint">此引擎不使用上面的题库：默认在 <code>bundled</code> GSM8K 算术子集上测，可用 <code>--eval</code> 覆盖；仅支持本地 HF 目录。官方 flag 以 <code>senbonzakura capability --help</code> 为准；失败时日志会完整显示，工具退出码有语义，不要当崩溃重试。</p>
+          </div>
+        </div>
+        <div class="row tight" style="margin-top:12px">
+          <button class="primary" id="cap-run">开始测试</button>
+          <span class="small muted" id="cap-hint"></span>
+        </div>
+      </div>
+
+      <div class="card" id="cap-job-card" style="display:none">
+        <div class="card-head">
+          <h3>测试进度</h3>
+          <div class="row tight">
+            <span id="cap-job-status" class="badge">queued</span>
+            <button class="small" id="cap-job-hide" type="button">收起</button>
+          </div>
+        </div>
+        <div class="progress"><div id="cap-progress"></div></div>
+        <pre class="log" id="cap-log"></pre>
+      </div>
+
+      <div class="card" id="cap-result-card" style="display:none">
+        <div class="card-head"><h3>本次结果</h3><span id="cap-result-summary" class="small muted"></span></div>
+        <div id="cap-result"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>历史结果</h3><button class="small" id="cap-refresh">刷新</button></div>
+        <div id="cap-list" class="list"></div>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------------- reports -->
+    <section id="tab-reports">
+      <h2>报告</h2>
+      <p class="lead">每次完成的实验都会留下 held-out 报告与 model card。报告默认中文；数字来自 report 段，不参与搜索或选择。</p>
+      <div class="card">
+        <div class="row">
+          <div>
+            <label for="report-run">实验</label>
+            <select id="report-run"></select>
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button id="report-refresh" type="button">刷新列表</button>
+          </div>
+        </div>
+        <div class="row tight" style="margin-top:10px">
+          <button class="primary" data-report-file="report.md">实验报告</button>
+          <button data-report-file="model_card.md">Model Card</button>
+          <button data-report-file="report.json">原始 JSON</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="report-view" class="report"><div class="empty">选择实验后查看报告</div></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+<script src="/app.js"></script>
+</body>
+</html>

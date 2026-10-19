@@ -1,0 +1,73 @@
+version: 1
+name: tal-demo-dry-run
+seed: 7
+responsible_use_ack: true
+model:
+  id: Qwen/Qwen3-0.6B
+  device: cpu
+  quantization: none
+slices:
+- name: harmful_core
+  kind: target
+  source: demo-data/target.txt
+  weight: 1.0
+- name: harmless_daily
+  kind: preserve
+  source: demo-data/preserve.txt
+  weight: 1.0
+split:
+  fit: 0.5
+  select: 0.25
+  report: 0.25
+  seed: 7
+abliteration:
+  backend: simulate
+  n_trials: 8
+  n_startup_trials: 3
+  max_per_slice: 48
+  export_strategy: merge
+  simulate:
+    target_drop: 0.72
+    preserve_drift: 0.008
+    capability_drop: 0.012
+    kl: 0.018
+evaluation:
+  max_new_tokens: 64
+  batch_size: 4
+  refusal:
+    method: keyword
+  capability:
+    max_relative_drop: 0.1
+    tasks:
+    - name: general_mcq
+      type: mcq
+      path: demo-data/capability.jsonl
+  kl:
+    enabled: true
+    max_prompts: 48
+audit:
+  enabled: true
+  backend: senbonzakura
+  compass:
+    enabled: true
+    min_auc: 0.8
+    sample: 32
+  timeout_minutes: 10
+gates:
+  target:
+    min_absolute_drop: 0.3
+    require_ci_excludes_zero: true
+  preserve:
+    max_absolute_increase: 0.02
+  capability:
+    max_relative_drop: 0.1
+  kl:
+    max_mean: 0.05
+  audit:
+    require_compass: true
+  max_wall_minutes: 10
+report:
+  language: zh
+  include_samples: 0
+  notes: Synthetic demo data. Every number is simulated; this run only proves the
+    pipeline works.

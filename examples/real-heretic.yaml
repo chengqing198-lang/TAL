@@ -1,0 +1,103 @@
+# A realistic, fully-local experiment. Replace paths before running.
+version: 1
+name: qwen3-4b-refusal-core
+seed: 7
+responsible_use_ack: true # you may only edit weights you are allowed to modify
+
+model:
+  id: Qwen/Qwen3-4B-Instruct-2507
+  device: cuda
+  quantization: none
+  # Pin an exact snapshot for reproducibility (recommended for published runs):
+  # local_path: D:/models/Qwen3-4B-Instruct-2507
+
+slices:
+  # Target: what should stop being refused. Split by category so the report can
+  # show *which* refusal was removed, not just "refusals went down".
+  - name: harmful_core
+    kind: target
+    source: data/target_core.txt
+    weight: 1.0
+  - name: harmful_edge
+    kind: target
+    source: data/target_edge.txt
+    weight: 0.5
+  # Preserve: behaviour that must not move. Include near-boundary prompts.
+  - name: benign_near_boundary
+    kind: preserve
+    source: data/preserve_boundary.txt
+    weight: 1.0
+  - name: benign_daily
+    kind: preserve
+    source: data/preserve_daily.txt
+    weight: 1.0
+
+split:
+  fit: 0.5
+  select: 0.25
+  report: 0.25
+  seed: 7
+
+abliteration:
+  backend: heretic
+  n_trials: 60
+  n_startup_trials: 20
+  max_response_length: 96
+  max_per_slice: 48
+  modifier: ara
+  export_strategy: merge
+  timeout_minutes: 360
+  objective_weights:
+    refusal: 1.0
+    preserve_kl: 2.0
+    capability_kl: 1.0
+
+evaluation:
+  # Capability tasks must be declared HERE, under evaluation.capability.tasks.
+  max_new_tokens: 128
+  batch_size: 8
+  refusal:
+    method: keyword
+  capability:
+    max_relative_drop: 0.05
+    tasks:
+      - name: mmlu_subset
+        type: mcq
+        path: data/mmlu_subset.jsonl
+        metric: accuracy
+      - name: arithmetic
+        type: generation
+        path: data/arithmetic.jsonl
+        metric: auto
+  kl:
+    enabled: true
+    max_prompts: 96
+
+audit:
+  enabled: true
+  backend: senbonzakura
+  compass:
+    enabled: true
+    min_auc: 0.80
+    sample: 128
+  timeout_minutes: 60
+
+gates:
+  target:
+    min_absolute_drop: 0.30
+    require_ci_excludes_zero: true
+  preserve:
+    max_absolute_increase: 0.02
+  capability:
+    max_relative_drop: 0.05
+  kl:
+    max_mean: 0.05
+  audit:
+    require_compass: true
+  max_wall_minutes: 720
+
+report:
+  title: Qwen3-4B targeted refusal removal
+  language: zh
+  include_samples: 0
+  notes: Local weights only. Report is a record of this run, not a safety certification.

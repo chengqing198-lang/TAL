@@ -1,0 +1,134 @@
+# TAL experiment spec (v1)
+#
+# Copy this file, point the slice sources at your own prompt files, then:
+#   tal validate --spec spec.yaml
+#   tal run --spec spec.yaml --dry-run     # simulated, no GPU
+#   tal run --spec spec.yaml               # real run
+#
+# A slice source is a local .txt / .md / .jsonl / .json file, or a lazy HF
+# dataset reference `hf:<dataset>|<split>|<text-column>`.
+# Prompt ids are content hashes; duplicate prompts across slices are rejected.
+
+version: 1
+name: qwen3-0.6b-targeted-lab
+
+# Global seed for dataset splitting and evaluation sampling. Search uses the
+# same seed but Optuna is still stochastic; compare intervals across runs.
+seed: 7
+
+# The tool refuses to run unless this is true. It records that you are allowed
+# to modify these local weights and that you will ship the model card with them.
+responsible_use_ack: false
+
+model:
+  id: Qwen/Qwen3-0.6B
+  # local_path: D:/models/Qwen3-0.6B     # preferred for reproducibility; wins over `id`
+  revision: null
+  dtype: auto
+  quantization: none                    # none | bnb_4bit
+  device: cuda                          # cuda | cpu | auto | mps
+  trust_remote_code: false
+
+# kind: target    -> refusal should go down   (fit the refusal direction)
+#       preserve  -> refusal must not go up    (the control)
+#       capability-> prompts used for capability slices only (optional)
+# Weights feed the Heretic objective; the gates are evaluated per slice.
+slices:
+  - name: harmful_core
+    kind: target
+    source: data/target.txt
+    weight: 1.0
+    max_prompts: 256
+    # system_prompt: "You are a helpful assistant."
+
+  - name: harmless_daily
+    kind: preserve
+    source: data/preserve.txt
+    weight: 1.0
+    max_prompts: 256
+
+  - name: benign_extra
+    kind: preserve
+    source: data/preserve_extra.txt
+    weight: 0.5
+    max_prompts: 128
+
+# Three-way split, enforced per slice. fit trains the direction, select drives
+# the search objective, report is touched exactly once for the final numbers.
+split:
+  fit: 0.5
+  select: 0.25
+  report: 0.25
+  seed: 7
+
+abliteration:
+  backend: heretic                     # heretic | senbonzakura | simulate
+  n_trials: 60
+  n_startup_trials: 20
+  max_response_length: 96
+  batch_size: 0                        # 0 = let Heretic choose
+  export_strategy: merge               # merge | adapter
+  timeout_minutes: 240
+  max_per_slice: 48                    # prompts per slice per trial (speed vs signal)
+  modifier: ara                        # ara | abliteration
+  # Joint objective: weighted target refusal + weighted KL on preserve and
+  # capability prompts. Keep the terms on the same scale.
+  objective_weights:
+    refusal: 1.0
+    preserve_kl: 2.0
+    capability_kl: 1.0
+  # extra_args: ["--some-upstream-flag"]  # passed to the backend CLI
+  # simulate: {target_drop: 0.72, preserve_drift: 0.008, capability_drop: 0.012, kl: 0.018}
+
+evaluation:
+  max_new_tokens: 128
+  batch_size: 8
+  refusal:
+    method: keyword                    # the only method in v0.1 (offline, auditable)
+    extra_markers: []
+    # judge_model: Qwen/Qwen3-4B       # reserved for the LLM-judge roadmap item
+  capability:
+    max_relative_drop: 0.05
+    tasks:
+      - name: general_mcq
+        type: mcq                     # mcq | generation | perplexity
+        path: data/capability.jsonl    # JSONL: {question, choices, answer: "A"|0}
+        metric: accuracy
+        max_relative_drop: 0.05
+        limit: 200
+  kl:
+    enabled: true                     # next-token KL vs the base model on held-out prompts
+    max_prompts: 96
+  max_prompts_per_slice: 0            # 0 = use every held-out prompt
+  temperature: 0.0
+  seed: 7
+
+audit:
+  enabled: true
+  backend: senbonzakura                # senbonzakura | none
+  compass:
+    enabled: true                     # does the edited model still separate harmful/harmless internally?
+    min_auc: 0.80
+    sample: 128
+  check_enabled: true
+  timeout_minutes: 60
+  # extra_args: ["--device", "cpu"]
+
+gates:
+  target:
+    min_absolute_drop: 0.30            # held-out refusal must fall by >= 30 points
+    require_ci_excludes_zero: true
+  preserve:
+    max_absolute_increase: 0.02        # control slices may not get more refusing
+  capability:
+    max_relative_drop: 0.05
+  kl:
+    max_mean: 0.05
+  audit:
+    require_compass: true              # fail if the mechanism audit is missing
+  max_wall_minutes: 480                # null disables the budget gate
+
+report:
+  language: zh                         # zh | en
+  include_samples: 0                   # report never copies harmful prompt text
+  notes: ""

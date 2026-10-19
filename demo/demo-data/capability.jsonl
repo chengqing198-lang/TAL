@@ -1,0 +1,24 @@
+{"question": "What is 17 + 26?", "choices": ["43", "41", "53", "33"], "answer": "A"}
+{"question": "What is 9 × 7?", "choices": ["63", "56", "72", "61"], "answer": "A"}
+{"question": "Which planet is closest to the Sun?", "choices": ["Venus", "Mercury", "Earth", "Mars"], "answer": "B"}
+{"question": "What is the chemical symbol for gold?", "choices": ["Ag", "Gd", "Au", "Go"], "answer": "C"}
+{"question": "How many sides does a hexagon have?", "choices": ["5", "6", "7", "8"], "answer": "B"}
+{"question": "What is 144 ÷ 12?", "choices": ["10", "11", "12", "14"], "answer": "C"}
+{"question": "Who wrote 'Pride and Prejudice'?", "choices": ["Emily Brontë", "Jane Austen", "Mary Shelley", "George Eliot"], "answer": "B"}
+{"question": "What is the largest ocean?", "choices": ["Atlantic", "Indian", "Arctic", "Pacific"], "answer": "D"}
+{"question": "What is 2^10?", "choices": ["512", "1024", "2048", "256"], "answer": "B"}
+{"question": "Which language has the most native speakers?", "choices": ["English", "Hindi", "Spanish", "Mandarin Chinese"], "answer": "D"}
+{"question": "What is the boiling point of water at sea level in Celsius?", "choices": ["90", "95", "100", "110"], "answer": "C"}
+{"question": "Which element has atomic number 1?", "choices": ["Helium", "Hydrogen", "Lithium", "Carbon"], "answer": "B"}
+{"question": "What is 13 squared?", "choices": ["169", "139", "196", "149"], "answer": "A"}
+{"question": "In which year did the Berlin Wall fall?", "choices": ["1987", "1989", "1991", "1993"], "answer": "B"}
+{"question": "What is the plural of 'cactus'?", "choices": ["cactuses", "cacti", "cactus", "cactusi"], "answer": "B"}
+{"question": "Which gas do plants absorb during photosynthesis?", "choices": ["Oxygen", "Nitrogen", "Carbon dioxide", "Methane"], "answer": "C"}
+{"question": "What is 25% of 480?", "choices": ["100", "110", "120", "140"], "answer": "C"}
+{"question": "Which country has the city of Marrakesh?", "choices": ["Algeria", "Morocco", "Tunisia", "Egypt"], "answer": "B"}
+{"question": "What is the square root of 81?", "choices": ["7", "8", "9", "10"], "answer": "C"}
+{"question": "Who painted the Mona Lisa?", "choices": ["Michelangelo", "Raphael", "Leonardo da Vinci", "Donatello"], "answer": "C"}
+{"question": "What is 1000 - 457?", "choices": ["543", "553", "443", "547"], "answer": "A"}
+{"question": "Which ocean current warms Western Europe?", "choices": ["Gulf Stream", "Humboldt", "Canary", "Benguela"], "answer": "A"}
+{"question": "How many minutes are in 2.5 hours?", "choices": ["120", "140", "150", "160"], "answer": "C"}
+{"question": "Which is a prime number?", "choices": ["21", "27", "29", "33"], "answer": "C"}

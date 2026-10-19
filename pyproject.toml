@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tal-lab"
+version = "0.1.0"
+description = "Targeted Abliteration Lab - reproducible, slice-targeted local refusal-removal experiments with capability gates"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "TAL contributors" }]
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+hf = ["torch>=2.2", "transformers>=4.45", "accelerate>=0.30"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+tal = "tal.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tal*"]
+
+[tool.setuptools.package-data]
+tal = ["templates/*.yaml", "ui/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
