@@ -54,6 +54,18 @@ class PreflightTests(unittest.TestCase):
             )
         )
 
+    def test_cpu_auto_dtype_can_use_a_smaller_factor(self):
+        self.assertIsNone(
+            _preflight_error(
+                3 * GB,
+                free_vram=0,
+                available_ram=int(6 * GB),
+                device="cpu",
+                quantized=False,
+                cpu_factor=1.3,
+            )
+        )
+
     def test_unknown_sizes_and_memory_skip_the_check(self):
         self.assertIsNone(
             _preflight_error(

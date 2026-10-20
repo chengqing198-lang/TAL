@@ -96,6 +96,7 @@ const state = {
   prompts: [],
   runs: [],
   capResults: [],
+  layerResults: [],
   activeJobs: new Map(),
   pollTimer: null,
 };
@@ -125,6 +126,11 @@ function activate(tab) {
   // refresh is still in flight.
   if (tab === "experiments" || tab === "capability") {
     refreshState().catch((error) => toast(error.message, "error"));
+  }
+  if (tab === "layers") {
+    refreshState()
+      .then(refreshLayerResults)
+      .catch((error) => toast(error.message, "error"));
   }
   if (tab === "reports") loadRuns();
   if (tab === "capability") renderCapHistory();
@@ -189,7 +195,9 @@ function renderModelSelects() {
     return { value: m.id, label: m.name, disabled: true };
   });
   fillSelect($("#exp-model"), ablationEntries, "选择模型");
+  fillSelect($("#lay-model"), ablationEntries, "选择本地权重模型");
   fillSelect($("#cap-model"), entries, entries.length ? undefined : "（先添加模型）");
+  renderLayerRunSelect();
   updateExpModelHint();
 }
 
@@ -203,6 +211,8 @@ function renderPromptSelects() {
   fillSelect($("#exp-cap"), entriesFor("capability"), "不使用能力题库");
   fillSelect($("#cap-library"), entriesFor("capability"), "选择题库");
   fillSelect($("#batch-lib"), entriesFor("target").concat(entriesFor("preserve")), "选择请求库");
+  fillSelect($("#lay-target"), entriesFor("target"), "内置 harmful 示例");
+  fillSelect($("#lay-preserve"), entriesFor("preserve"), "内置 harmless 示例");
 }
 
 /* ------------------------------------------------------------------ */
@@ -912,6 +922,350 @@ $("#cap-refresh").addEventListener("click", () => refreshState().catch((e) => to
 $("#cap-job-hide").addEventListener("click", () => ($("#cap-job-card").style.display = "none"));
 
 /* ------------------------------------------------------------------ */
+/* layer inspection                                                    */
+/* ------------------------------------------------------------------ */
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgNode(tag, attrs, text) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === null || value === undefined) continue;
+    node.setAttribute(key, value);
+  }
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function renderLayerRunSelect() {
+  const entries = state.runs
+    .filter((run) => run.has_model)
+    .map((run) => ({
+      value: run.run_id,
+      label: `${run.spec_name || run.run_id}${run.status ? " · " + run.status : ""}`,
+    }));
+  fillSelect($("#lay-run"), entries, "只分析基座");
+}
+
+async function refreshLayerResults() {
+  const data = await api("/api/interpret");
+  state.layerResults = data.results || [];
+  renderLayerHistory();
+}
+
+function renderLayerJob(job) {
+  $("#lay-job-card").style.display = "";
+  const status = $("#lay-job-status");
+  status.className = "badge " + (job.status === "done" ? "ok" : job.status === "failed" ? "bad" : "run");
+  status.textContent = job.status;
+  const progress = job.progress === null || job.progress === undefined ? (job.status === "running" ? 0.1 : 0) : job.progress;
+  $("#lay-progress").style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+  $("#lay-log").textContent = job.log || "";
+  $("#lay-log").scrollTop = $("#lay-log").scrollHeight;
+}
+
+function layerScale(rows) {
+  const values = rows.map((row) => Number(row.base.z) || 0);
+  const lo = Math.min(-1, ...values);
+  const hi = Math.max(2, ...values);
+  return { lo, hi: hi === lo ? lo + 1 : hi };
+}
+
+function layerLineChart(rows) {
+  const width = 1000;
+  const height = 280;
+  const pad = { left: 46, right: 16, top: 18, bottom: 34 };
+  const { lo, hi } = layerScale(rows);
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+  const x = (index) => pad.left + (rows.length <= 1 ? 0 : (index / (rows.length - 1)) * innerW);
+  const y = (value) => pad.top + innerH - ((value - lo) / (hi - lo)) * innerH;
+  const root = svgNode("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    class: "layer-chart",
+    role: "img",
+    "aria-label": "逐层拒答方向投影",
+  });
+  for (let tick = Math.ceil(lo); tick <= Math.floor(hi); tick += 1) {
+    if (tick % Math.max(1, Math.ceil((hi - lo) / 6)) !== 0 && tick !== 0) continue;
+    root.append(svgNode("line", { x1: pad.left, x2: width - pad.right, y1: y(tick), y2: y(tick), class: "grid" }));
+    root.append(svgNode("text", { x: pad.left - 8, y: y(tick) + 4, class: "axis", "text-anchor": "end" }, String(tick)));
+  }
+  root.append(svgNode("line", { x1: pad.left, x2: width - pad.right, y1: y(0), y2: y(0), class: "zero" }));
+  const points = rows.map((row, index) => `${x(index)},${y(Number(row.base.z) || 0)}`).join(" ");
+  root.append(svgNode("polyline", { points, class: "line-base" }));
+  const every = Math.max(1, Math.ceil(rows.length / 12));
+  rows.forEach((row, index) => {
+    if (index % every !== 0 && index !== rows.length - 1) return;
+    root.append(
+      svgNode("text", { x: x(index), y: height - 12, class: "axis", "text-anchor": "middle" }, row.label || String(index))
+    );
+  });
+  rows.forEach((row, index) => {
+    const value = Number(row.base.z) || 0;
+    const circle = svgNode("circle", {
+      cx: x(index),
+      cy: y(value),
+      r: row.index === row.base.index ? 4 : 3,
+      class:
+        row.index === rows[rows.length - 1].base.index
+          ? "dot-final"
+          : value >= 1
+            ? "dot-warm"
+            : "dot-base",
+    });
+    circle.append(
+      svgNode(
+        "title",
+        {},
+        `${row.label}: z=${num(value, 3)}, projection=${num(row.base.projection, 3)}${
+          row.base.top_token ? `, lens=${row.base.top_token}` : ""
+        }`
+      )
+    );
+    root.append(circle);
+  });
+  return root;
+}
+
+function layerDeltaChart(rows) {
+  const values = rows.map((row) => Number(row.delta_projection) || 0);
+  const width = 1000;
+  const height = 220;
+  const pad = { left: 46, right: 16, top: 16, bottom: 34 };
+  const lo = Math.min(-0.01, ...values);
+  const hi = Math.max(0.01, ...values);
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+  const x = (index) => pad.left + (rows.length <= 1 ? 0 : (index / (rows.length - 1)) * innerW);
+  const y = (value) => pad.top + innerH - ((value - lo) / (hi - lo)) * innerH;
+  const root = svgNode("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    class: "layer-chart",
+    role: "img",
+    "aria-label": "消融在各层造成的投影变化",
+  });
+  root.append(svgNode("line", { x1: pad.left, x2: width - pad.right, y1: y(0), y2: y(0), class: "zero" }));
+  root.append(
+    svgNode("text", { x: pad.left - 8, y: y(hi) + 4, class: "axis", "text-anchor": "end" }, num(hi, 2))
+  );
+  root.append(
+    svgNode("text", { x: pad.left - 8, y: y(lo) + 4, class: "axis", "text-anchor": "end" }, num(lo, 2))
+  );
+  const barWidth = Math.max(2, Math.min(10, innerW / Math.max(1, rows.length) - 2));
+  rows.forEach((row, index) => {
+    const value = Number(row.delta_projection) || 0;
+    const top = Math.min(y(0), y(value));
+    const heightValue = Math.abs(y(value) - y(0));
+    const rect = svgNode("rect", {
+      x: x(index) - barWidth / 2,
+      y: top,
+      width: barWidth,
+      height: Math.max(1, heightValue),
+      class: value <= 0 ? "bar-good" : "bar-warn",
+    });
+    rect.append(
+      svgNode("title", {}, `${row.label}: Δprojection=${num(value, 3)}（负值=更远离拒答方向）`)
+    );
+    root.append(rect);
+  });
+  return root;
+}
+
+function renderLayerSummary(result) {
+  const summary = result.summary || {};
+  const cards = [
+    ["起始层 z≥1", summary.onset_layer === null || summary.onset_layer === undefined ? "未出现" : summary.onset_layer],
+    ["峰值层", summary.peak_layer === null || summary.peak_layer === undefined ? "-" : `${summary.peak_layer} (z=${num(summary.peak_z, 2)})`],
+    [
+      "消融影响最大层",
+      summary.ablation_layer === null || summary.ablation_layer === undefined
+        ? "仅基座"
+        : `${summary.ablation_layer} (Δ=${num(summary.ablation_drop, 2)})`,
+    ],
+    ["末层投影变化", summary.final_delta === null || summary.final_delta === undefined ? "-" : num(summary.final_delta, 3)],
+  ];
+  return el(
+    "div",
+    { class: "row", style: "margin-bottom:12px" },
+    ...cards.map(([label, value]) =>
+      el(
+        "div",
+        { class: "card", style: "flex:1" },
+        el("div", { class: "muted small", text: label }),
+        el("div", { style: "font-size:20px;font-weight:600", text: String(value) })
+      )
+    )
+  );
+}
+
+function renderLayerResult(result) {
+  const box = $("#lay-result");
+  clear(box);
+  if (!result) return;
+  box.append(
+    el(
+      "div",
+      { class: "card" },
+      el(
+        "div",
+        { class: "card-head" },
+        el("h3", { text: `层间透视 · ${result.model || ""}` }),
+        badge(`${result.duration_s || "-"}s`, "ok")
+      ),
+      el("p", { class: "small muted", text: `${result.prompt || ""}` }),
+      renderLayerSummary(result),
+      el("div", { class: "chart-wrap" }, layerLineChart(result.layers || [])),
+      el(
+        "p",
+        { class: "hint" },
+        "z 是“相对 harmless 对照的投影强度”，不是概率。起始层按 z≥1 粗略标出；峰值只说明这条请求的方向投影最强处。"
+      )
+    )
+  );
+  if (result.edited_ref) {
+    box.append(
+      el(
+        "div",
+        { class: "card" },
+        el("div", { class: "card-head" }, el("h3", { text: "消融导出的逐层变化" }), badge("edited − base", "warn")),
+        el("div", { class: "chart-wrap" }, layerDeltaChart(result.layers || [])),
+        el("p", { class: "hint", text: "负值表示该层更远离从 harmful/harmless 估计出的拒答方向。它是导出权重的结果，不是因果证明。" })
+      )
+    );
+  }
+  if ((result.sweep || []).length) {
+    const sweepRows = result.sweep.map((item) => ({ label: item.label, delta_projection: item.delta, base: { z: item.delta } }));
+    box.append(
+      el(
+        "div",
+        { class: "card" },
+        el("div", { class: "card-head" }, el("h3", { text: "逐层方向消融扫描" }), badge("因果提示", "warn")),
+        el("div", { class: "chart-wrap" }, layerDeltaChart(sweepRows)),
+        el("p", { class: "hint", text: "每次只减去该层的拒答方向，再读末层投影。负值越大，说明这一层对最终拒答方向的贡献越直接；仍是单方向干预，不等于完整电路。" })
+      )
+    );
+  }
+  const table = el("table");
+  table.append(
+    el(
+      "thead",
+      {},
+      el(
+        "tr",
+        {},
+        el("th", { text: "层" }),
+        el("th", { text: "z" }),
+        el("th", { text: "投影" }),
+        el("th", { text: "lens top" }),
+        el("th", { text: "拒答 token 质量" }),
+        el("th", { text: "消融 Δ" })
+      )
+    )
+  );
+  const body = el("tbody");
+  for (const row of result.layers || []) {
+    body.append(
+      el(
+        "tr",
+        {},
+        el("td", { text: row.label }),
+        el("td", { text: num(row.base.z, 3) }),
+        el("td", { text: num(row.base.projection, 3) }),
+        el("td", { class: "small", text: row.base.top_token || "-" }),
+        el("td", { text: pct(row.base.refusal_mass) }),
+        el("td", { text: row.delta_projection === undefined ? "-" : num(row.delta_projection, 3) })
+      )
+    );
+  }
+  table.append(body);
+  box.append(el("div", { class: "card" }, el("div", { class: "card-head" }, el("h3", { text: "逐层数据" })), table));
+}
+
+function renderLayerHistory() {
+  const list = $("#lay-list");
+  clear(list);
+  if (!state.layerResults.length) {
+    list.append(el("div", { class: "empty", text: "还没有层间分析" }));
+    return;
+  }
+  for (const result of state.layerResults) {
+    const summary = result.summary || {};
+    list.append(
+      el(
+        "div",
+        { class: "item" },
+        el(
+          "div",
+          { class: "meta" },
+          el("div", { class: "title", text: result.model || result.id }),
+          el("div", { class: "sub truncate", text: `${result.prompt || ""} · ${shortDate(result.created_at)}` })
+        ),
+        el(
+          "div",
+          { class: "row tight" },
+          badge(summary.peak_layer === null || summary.peak_layer === undefined ? "无峰值" : `峰值 L${summary.peak_layer}`, "warn"),
+          el("button", {
+            class: "small",
+            text: "查看",
+            onclick: async () => {
+              try {
+                const data = await api(`/api/interpret/${encodeURIComponent(result.id)}`);
+                renderLayerResult(data);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              } catch (error) {
+                toast(error.message, "error");
+              }
+            },
+          })
+        )
+      )
+    );
+  }
+}
+
+$("#lay-target").addEventListener("change", async () => {
+  const id = $("#lay-target").value;
+  if (!id) return;
+  try {
+    const data = await api(`/api/prompts/${encodeURIComponent(id)}`);
+    const first = (data.items || [])[0];
+    if (first && !$("#lay-prompt").value.trim()) {
+      $("#lay-prompt").value = typeof first === "string" ? first : first.text || first.prompt || "";
+    }
+  } catch (error) {
+    toast(error.message, "error");
+  }
+});
+
+$("#lay-run-btn").addEventListener("click", async () => {
+  const modelId = $("#lay-model").value;
+  if (!modelId) return toast("先选择本地权重模型", "error");
+  const payload = {
+    model_id: modelId,
+    edited_run_id: $("#lay-run").value,
+    target_prompt_id: $("#lay-target").value,
+    preserve_prompt_id: $("#lay-preserve").value,
+    prompt: $("#lay-prompt").value.trim(),
+    system: $("#lay-system").value.trim(),
+    max_contrast: Number($("#lay-contrast").value || 6),
+    sweep: $("#lay-sweep").checked,
+  };
+  $("#lay-run-btn").disabled = true;
+  try {
+    const data = await api("/api/interpret", { method: "POST", body: payload });
+    trackJob(data.job.id, "interpret");
+    toast("层间分析已排队", "ok");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    $("#lay-run-btn").disabled = false;
+  }
+});
+
+$("#lay-refresh").addEventListener("click", () => refreshLayerResults().catch((e) => toast(e.message, "error")));
+$("#lay-job-hide").addEventListener("click", () => ($("#lay-job-card").style.display = "none"));
+
+/* ------------------------------------------------------------------ */
 /* jobs                                                               */
 /* ------------------------------------------------------------------ */
 function trackJob(jobId, kind) {
@@ -939,11 +1293,20 @@ async function pollJobs() {
       continue;
     }
     if (kind === "experiment") renderExpJob(job);
+    else if (kind === "interpret") renderLayerJob(job);
     else renderCapJob(job);
 
     if (job.status === "done" || job.status === "failed") {
       state.activeJobs.delete(jobId);
-      if (kind === "experiment") {
+      if (kind === "interpret") {
+        if (job.status === "failed") {
+          toast("层间分析失败：" + (job.error || "").slice(0, 300), "error");
+        } else {
+          renderLayerResult(job.result);
+          refreshLayerResults().catch(() => {});
+          toast("层间分析完成", "ok");
+        }
+      } else if (kind === "experiment") {
         await refreshState().catch(() => {});
         if (job.status === "failed") toast("实验失败：" + (job.error || "").slice(0, 300), "error");
         else {

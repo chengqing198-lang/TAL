@@ -29,6 +29,7 @@ from .services import (
     start_batch_probe,
     start_capability,
     start_experiment,
+    start_interpret,
 )
 from .store import Workspace
 
@@ -243,6 +244,39 @@ class UiHandler(BaseHTTPRequestHandler):
                     return self._json(start_capability(ws, jobs, self._body()), status=202)
             if len(rest) == 2 and method == "GET":
                 path = ws.capability_dir / f"{rest[1]}.json"
+                if not path.exists():
+                    raise KeyError(rest[1])
+                return self._json(json.loads(path.read_text(encoding="utf-8")))
+
+        # layer inspection ----------------------------------------------
+        if rest[:1] == ["interpret"]:
+            if len(rest) == 1:
+                if method == "POST":
+                    return self._json(start_interpret(ws, jobs, self._body()), status=202)
+                if method == "GET":
+                    results = []
+                    for path in sorted(
+                        ws.interpret_dir.glob("*.json"),
+                        key=lambda item: item.stat().st_mtime,
+                        reverse=True,
+                    ):
+                        try:
+                            data = json.loads(path.read_text(encoding="utf-8"))
+                        except (OSError, json.JSONDecodeError):
+                            continue
+                        results.append(
+                            {
+                                "id": data.get("id") or path.stem,
+                                "created_at": data.get("created_at"),
+                                "model": data.get("model"),
+                                "prompt": data.get("prompt"),
+                                "summary": data.get("summary"),
+                                "duration_s": data.get("duration_s"),
+                            }
+                        )
+                    return self._json({"results": results})
+            if len(rest) == 2 and method == "GET":
+                path = ws.interpret_dir / f"{rest[1]}.json"
                 if not path.exists():
                     raise KeyError(rest[1])
                 return self._json(json.loads(path.read_text(encoding="utf-8")))

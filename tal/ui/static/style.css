@@ -198,3 +198,16 @@ details[open] > summary { color: var(--text); margin-bottom: 6px; }
   .sidebar .foot { display: none; }
   .main { padding: 18px; }
 }
+
+/* --- layer inspector ------------------------------------------------- */
+.chart-wrap { width: 100%; overflow-x: auto; margin: 10px 0 4px; }
+.layer-chart { width: 100%; min-width: 640px; display: block; }
+.layer-chart .grid { stroke: #263243; stroke-width: 1; stroke-dasharray: 3 5; }
+.layer-chart .zero { stroke: #51627a; stroke-width: 1.2; }
+.layer-chart .axis { fill: #8a99ac; font-size: 11px; font-family: var(--mono); }
+.layer-chart .line-base { fill: none; stroke: #4da3ff; stroke-width: 2.2; stroke-linejoin: round; }
+.layer-chart .dot-base { fill: #4da3ff; opacity: .75; }
+.layer-chart .dot-warm { fill: #f0b429; }
+.layer-chart .dot-final { fill: #ff6b6b; }
+.layer-chart .bar-good { fill: #3ddc97; opacity: .85; }
+.layer-chart .bar-warn { fill: #f0b429; opacity: .85; }

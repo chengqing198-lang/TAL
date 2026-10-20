@@ -46,6 +46,7 @@ class Workspace:
         self.capability_dir = self.root / "capability"
         self.senbonzakura_dir = self.root / "senbonzakura"
         self.probes_dir = self.root / "probes"
+        self.interpret_dir = self.root / "interpret"
         for path in (
             self.root,
             self.prompts_dir,
@@ -56,6 +57,7 @@ class Workspace:
             self.capability_dir,
             self.senbonzakura_dir,
             self.probes_dir,
+            self.interpret_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()

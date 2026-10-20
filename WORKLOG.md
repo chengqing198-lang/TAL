@@ -79,11 +79,29 @@ TAL（Targeted Abliteration Lab）是一个面向本地模型的定向消融实�
 - UI 默认开启 Senbonzakura 审计，但本机未安装；改为未显式指定时按
   `which("senbonzakura")` 自动决定，避免昂贵实验在最后一步失败。
 
+## 2026-10-20：层间透视
+
+- 新增 `tal/interpret.py`：对本地 HF 权重逐层取 last hidden state，用
+  harmful / harmless 对照的均值差估计单位拒答方向；输出 `projection`、
+  相对 harmless 分布的 `z`、logit-lens top token / 拒答 token 质量。
+- 支持指定一个已完成的消融 run，重新加载其 `stages/abliterate/model`，
+  逐层计算 `Δprojection`，标出消融影响最大的层。
+- 可选 `sweep`：每次只 hook 一层并减去该层方向，读末层投影变化；这是
+  单方向因果提示，不是完整电路证明。
+- UI 新增“层间透视”页签：模型/对比 run/请求库/请求/system/对照数/
+  sweep 开关，任务走 `JobManager`；结果用原生 SVG 画 z 折线与 Δ投影柱，
+  历史结果存 `ui-data/interpret/layers-*.json`。
+- 0.6B 实测（CPU，2 条对照）：29 层，`onset=L4`、`peak=L21`、
+  `peak_z≈11.1`；对比 `qwen06-ditch-smoke2` 导出，`ablation_layer=L21`、
+  `ablation_drop≈-6.46`，L16–L28 的 Δ 全为负、L1–L15 不变，与 ditch
+  只改后段 attention/MLP 的行为一致。
+
 ## 测试与验证
 
-- `python -m unittest discover -s tests`：**57 项全过**。
+- `python -m unittest discover -s tests`：**67 项全过**。
 - 覆盖 spec/指纹/缓存、统计区间、门禁、Heretic TOML、ditch argv 与
-  GGUF 校验、UI store/specbuilder、评测内存预检。
+  GGUF 校验、层间透视的路径/prompt/汇总/合并、UI store/specbuilder、
+  评测内存预检。
 - 真实运行留档在本地 `ui-data/runs/` 与 `runs/`（不随仓库发布，避免
   权重、报告和本地路径进入版本库）。
 

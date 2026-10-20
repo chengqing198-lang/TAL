@@ -76,11 +76,16 @@ def _preflight_error(
     available_ram: int,
     device: str,
     quantized: bool,
+    cpu_factor: float = 2.3,
 ) -> str | None:
     """Refuse a load that would exhaust the machine instead of crashing in CUDA.
 
     A native access violation while loading a 4B bf16 checkpoint kills the whole
     UI process, so keep a conservative margin and report the numbers instead.
+
+    ``cpu_factor`` is the in-memory expansion over the on-disk bf16 checkpoint:
+    the evaluator loads CPU weights as float32 (default 2.3), while the layer
+    inspector uses ``torch_dtype="auto"`` and can pass a smaller factor.
     """
     if weight_bytes <= 0:
         return None
@@ -88,7 +93,12 @@ def _preflight_error(
         return None
     # bnb_4bit stores roughly 4 bits per parameter plus scales; 0.35 is a safe
     # estimate for the checkpoint's in-memory footprint.
-    need = weight_bytes * (0.35 if quantized else 1.15)
+    if quantized:
+        need = weight_bytes * 0.35
+    elif device in ("cuda", "auto"):
+        need = weight_bytes * 1.15
+    else:
+        need = weight_bytes * cpu_factor
     # bitsandbytes still streams every checkpoint tensor through host memory
     # while quantizing it.  With a 16GB machine and a resident 4B llama.cpp
     # server, loading an 8GB bf16 checkpoint can exhaust RAM before the GPU
@@ -107,15 +117,18 @@ def _preflight_error(
         budget = int(free_vram * 0.9)
         where = f"GPU 空闲 {free_vram / 2**30:.1f}GB（不启用 CPU offload）"
     else:
-        # CPU loading uses float32, i.e. twice the bf16 checkpoint size.
-        need *= 2.0
-        budget = int(available_ram * 0.8)
+        budget = int(available_ram * 0.85)
         where = f"系统可用内存 {available_ram / 2**30:.1f}GB"
     if need <= budget:
         return None
+    crash = (
+        "CUDA 访问冲突"
+        if device in ("cuda", "auto")
+        else "内存不足崩溃"
+    )
     return (
         f"模型权重约 {weight_bytes / 2**30:.1f}GB，加载预计需要 {need / 2**30:.1f}GB；"
-        f"当前 {where}。继续加载可能触发 CUDA 访问冲突并让整个 UI 进程退出。"
+        f"当前 {where}。继续加载可能触发 {crash} 并让整个 UI 进程退出。"
         "请换更小的模型（如 Qwen3-0.6B/1.7B）、关闭占内存的程序，"
         "或使用 4-bit 量化 / 更大显存的机器。"
     )

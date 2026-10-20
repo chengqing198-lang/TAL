@@ -18,6 +18,7 @@
     <button class="tab-btn" data-tab="chat"><span class="dot"></span>对话探测</button>
     <button class="tab-btn" data-tab="experiments"><span class="dot"></span>定向消融</button>
     <button class="tab-btn" data-tab="capability"><span class="dot"></span>能力测试</button>
+    <button class="tab-btn" data-tab="layers"><span class="dot"></span>层间透视</button>
     <button class="tab-btn" data-tab="reports"><span class="dot"></span>报告</button>
     <div class="foot">
       本地工具 · 无鉴权<br>
@@ -353,6 +354,78 @@
       <div class="card">
         <div class="card-head"><h3>历史结果</h3><button class="small" id="cap-refresh">刷新</button></div>
         <div id="cap-list" class="list"></div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- layers -->
+    <section id="tab-layers">
+      <h2>层间透视</h2>
+      <p class="lead">逐层查看一条请求在模型内部留下的痕迹：拒答方向投影有多强、哪一层开始抬头、消融导出把哪些层推离了拒答方向。这是诊断视图，不是“某个拒答神经元”的证明；数字都来自当前权重与当前请求。</p>
+
+      <div class="card">
+        <div class="card-head"><h3>分析设置</h3></div>
+        <div class="row">
+          <div>
+            <label for="lay-model">基座模型（本地权重）</label>
+            <select id="lay-model"></select>
+          </div>
+          <div>
+            <label for="lay-run">对比消融导出（可空）</label>
+            <select id="lay-run"><option value="">只分析基座</option></select>
+          </div>
+          <div>
+            <label for="lay-contrast">对照请求数（每侧）</label>
+            <input id="lay-contrast" type="number" value="6" min="2" max="16">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="lay-target">target 请求库（可空）</label>
+            <select id="lay-target"></select>
+          </div>
+          <div>
+            <label for="lay-preserve">preserve 请求库（可空）</label>
+            <select id="lay-preserve"></select>
+          </div>
+        </div>
+        <p class="hint" id="lay-hint">不选请求库时使用内置的 harmful / harmless 演示对照。GGUF 模型需要先绑定“评测用 HF 目录”。</p>
+        <label for="lay-prompt">要透视的请求</label>
+        <textarea id="lay-prompt" placeholder="选择 target 库后自动填入第一条；也可以自己写一条"></textarea>
+        <div class="row">
+          <div>
+            <label for="lay-system">System（可空）</label>
+            <input id="lay-system" type="text" placeholder="/no_think">
+          </div>
+          <div style="flex:0 0 auto;display:flex;align-items:flex-end">
+            <label style="display:flex;gap:8px;align-items:center">
+              <input id="lay-sweep" type="checkbox" style="width:auto">
+              <span>逐层因果扫描（慢）</span>
+            </label>
+          </div>
+        </div>
+        <div class="row tight" style="margin-top:12px">
+          <button class="primary" id="lay-run-btn">开始透视</button>
+          <span class="small muted">首次加载权重较慢；4B 建议开启 bnb_4bit。</span>
+        </div>
+      </div>
+
+      <div class="card" id="lay-job-card" style="display:none">
+        <div class="card-head">
+          <h3>分析进度</h3>
+          <div class="row tight">
+            <span id="lay-job-status" class="badge">queued</span>
+            <button class="small" id="lay-job-hide" type="button">收起</button>
+          </div>
+        </div>
+        <div class="progress"><div id="lay-progress"></div></div>
+        <pre class="log" id="lay-log"></pre>
+      </div>
+
+      <div id="lay-result"></div>
+
+      <div class="card">
+        <div class="card-head"><h3>历史分析</h3><button class="small" id="lay-refresh">刷新</button></div>
+        <div id="lay-list" class="list"></div>
       </div>
     </section>
 

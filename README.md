@@ -42,7 +42,7 @@ python -m tal.cli ui --workspace .\ui-data
 `PYTHONPATH`，并设置 `TAL_DITCH_BIN`（GGUF 消融需要）。改了 `tal/` 下的
 Python 代码后要重启 UI 进程，浏览器里的旧页面不会自动换后端代码。
 
-界面有六个页签：
+界面有七个页签：
 
 | 页签 | 作用 |
 |---|---|
@@ -52,6 +52,14 @@ Python 代码后要重启 UI 进程，浏览器里的旧页面不会自动换后
 | 定向消融 | 下拉框同步所有模型（API 端点 / GGUF 标注是否带可消融权重）；可选 `auto` / `heretic` / `ditch` 引擎；选模型 + target/preserve 库，可选能力题库，后台跑 `prepare → … → report` |
 | 能力测试 | 两种引擎：TAL 自带 MCQ（任何客户端，逐题判定 + Wilson 区间）与 Senbonzakura `capability`（本地 HF 目录，内置 GSM8K 算术题，解析其 `summary` 准确率与区间） |
 | 报告 | 浏览 `report.md`、`model_card.md` 与 `report.json`，可直接下载 |
+| 层间透视 | 对本地 HF 权重逐层显示拒答方向投影、logit lens、基座 vs 消融导出的 Δ投影；可勾选逐层方向消融扫描 |
+
+“层间透视”不是再跑一遍实验，而是对已有权重做诊断：它从 harmful / harmless 对照在每一层的
+均值差估计一个拒答方向，用 `z`（相对 harmless 分布的投影强度）标出起始层与峰值层；再把
+消融导出的同一请求逐层对比，负的 `Δprojection` 表示该层比基座更远离拒答方向。还可以对每层
+单独减去该方向、读末层投影的变化，作为单方向的因果提示。这些都只是**方向级证据**，不能
+证明“某一层就是拒答开关”；0.6B 的一次真实运行里峰值在 L21，而 ditch 的实际改动从 L16
+开始、到 L28 都可见。
 
 安全边界（重要）：
 
@@ -133,7 +141,7 @@ abliteration:
   （`src/study.zig` 的 `createFile` 只开写权限，随后 `file.length` 被拒）。从源码构建时把
   `createFile(..., .{ .truncate = false })` 改成
   `createFile(..., .{ .truncate = false, .read = true })` 即可；本次验证用的补丁二进制在
-  `D:\tools\ditch\ditch-0.7.0-tal-patched\ditch.exe`，同目录的
+  `tools\ditch\ditch-0.7.0-tal-patched\ditch.exe`（相对仓库根目录），同目录的
   `windows-checkpoint-read.patch` 是可复用的最小补丁（不随仓库分发）。
 - 源码构建（Zig 0.16）需要把缓存指到可写目录，否则 Windows 上会先报
   `unable to open global cache directory ... AccessDenied`：
@@ -249,6 +257,7 @@ tal/
   datasets.py       # .txt/.jsonl/HF 加载、三段分层切分、manifest
   pipeline.py       # 阶段 DAG、缓存、GPU 锁、断点续跑
   heretic_plugin.py # Heretic 自定义 Scorer（target/preserve/capability）
+  interpret.py      # 层间透视：拒答方向、logit lens、消融对比、逐层扫描
   backends/         # heretic / ditch / senbonzakura / simulate
   eval/             # 评测器：HF（真实）与 simulate（干跑）
   audit.py          # senbonzakura track + compass 包装
@@ -267,14 +276,15 @@ tests/              # 纯 CPU、无网络
 python -m unittest discover -s tests -v
 ```
 
-测试全部离线、只用 CPU，不加载任何模型、不访问网络（57 个用例）。覆盖统计区间、spec
+测试全部离线、只用 CPU，不加载任何模型、不访问网络（67 个用例）。覆盖统计区间、spec
 校验与指纹隔离、三段切分不重叠、dry-run 全链路与缓存、门禁失败语义、Senbonzakura
 track/compass 参数与 manifest 对齐、生成的 Heretic TOML 能被 `tomllib` 解析、ditch 的
-GGUF/eval_path 校验与 hf 产物提升，以及 UI 的工作区/请求库物化、spec 生成、后台任务、
-模拟客户端与真实 HTTP 路由。
+GGUF/eval_path 校验与 hf 产物提升、层间透视的方向/汇总/合并逻辑，以及 UI 的工作区/请求库
+物化、spec 生成、后台任务、模拟客户端与真实 HTTP 路由。
 
 ## 负责任使用
 
 TAL 只应用于**你有权修改的本地权重**，并遵守模型许可与上游 AGPL-3.0 条款。去护栏模型的
 输出可能有害；报告与 model card 应随权重一起分发，说明测过什么、没测什么。不要把本系统
 用于规避你无权规避的服务条款，或部署面向公众的无护栏模型。
+

@@ -10,15 +10,18 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
+from ..demo import HARMFUL, HARMLESS
 from ..errors import GateFailed, SpecError
+from ..interpret import inspect_layers, resolve_edited_ref, resolve_model_ref
 from ..pipeline import open_run, run_experiment
 from ..spec import load_spec
 from ..stats import rate_stats
-from ..util import run_command, which
+from ..util import atomic_write_text, run_command, which
 from .clients import build_client, is_refusal, probe_model
 from .jobs import Job, JobLogger, JobManager
 from .specbuilder import build_experiment_spec
@@ -455,6 +458,100 @@ def _start_senbonzakura_capability(workspace: Workspace, jobs: JobManager, paylo
 
     job = jobs.submit("capability", "Senbonzakura capability", work, log_path=log_path)
     return {"job": job.to_dict(logs=False), "out_file": str(out_file), "argv": argv}
+
+
+# --------------------------------------------------------------------------- #
+# layer inspection
+# --------------------------------------------------------------------------- #
+_INTERPRET_LOCK = threading.Lock()
+
+
+def _prompt_items(workspace: Workspace, prompt_id: str) -> list[str]:
+    if not prompt_id:
+        return []
+    lib = workspace.get_prompt(prompt_id)
+    items = []
+    for item in lib.get("items") or []:
+        if isinstance(item, dict):
+            items.append(str(item.get("text") or item.get("prompt") or ""))
+        else:
+            items.append(str(item))
+    return [item for item in items if item.strip()]
+
+
+def start_interpret(workspace: Workspace, jobs: JobManager, payload: dict) -> dict:
+    model_id = str(payload.get("model_id") or "")
+    entry = workspace.get_model(model_id)
+    base_ref = resolve_model_ref(entry)
+
+    target_id = str(payload.get("target_prompt_id") or "")
+    preserve_id = str(payload.get("preserve_prompt_id") or "")
+    harmful = _prompt_items(workspace, target_id) or list(HARMFUL)
+    harmless = _prompt_items(workspace, preserve_id) or list(HARMLESS)
+    max_contrast = _clamp(payload.get("max_contrast"), 8, 2, 16)
+    harmful = harmful[:max_contrast]
+    harmless = harmless[:max_contrast]
+
+    prompt = str(payload.get("prompt") or "").strip() or (harmful[0] if harmful else "")
+    if not prompt:
+        raise SpecError("要分析的请求不能为空")
+    system = str(payload.get("system") or "").strip() or None
+    do_sweep = bool(payload.get("sweep"))
+
+    edited_run_id = str(payload.get("edited_run_id") or "").strip()
+    edited_ref = None
+    if edited_run_id:
+        edited_ref, _ = resolve_edited_ref(workspace, edited_run_id)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() // 1_000_000 % 1000:03d}"
+    result_id = f"layers-{stamp}"
+    log_path = workspace.jobs_dir / f"interpret-{stamp}.log"
+    out_path = workspace.interpret_dir / f"{result_id}.json"
+
+    def work(job: Job) -> dict:
+        logger = JobLogger(job)
+        logger.info(
+            f"layer inspection: {base_ref} -> {edited_ref or 'base only'} "
+            f"({len(harmful)} harmful / {len(harmless)} harmless)"
+        )
+        with _INTERPRET_LOCK:
+            result = inspect_layers(
+                base_ref,
+                prompt=prompt,
+                system=system,
+                entry=entry,
+                edited_ref=edited_ref,
+                harmful=harmful,
+                harmless=harmless,
+                max_contrast=max_contrast,
+                do_sweep=do_sweep,
+                progress=lambda value: setattr(job, "progress", float(value)),
+            )
+        result.update(
+            {
+                "id": result_id,
+                "model_id": model_id,
+                "model": entry.get("name") or entry.get("model") or model_id,
+                "edited_run_id": edited_run_id or None,
+                "target_prompt_id": target_id or None,
+                "preserve_prompt_id": preserve_id or None,
+            }
+        )
+        atomic_write_text(out_path, json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+        logger.info(
+            f"layer inspection done in {result['duration_s']}s; "
+            f"peak={result['summary'].get('peak_layer')} "
+            f"onset={result['summary'].get('onset_layer')}"
+        )
+        return result
+
+    job = jobs.submit(
+        "interpret",
+        f"层间透视 · {entry.get('name') or model_id}",
+        work,
+        log_path=log_path,
+    )
+    return {"job": job.to_dict(logs=False), "id": result_id, "path": str(out_path)}
 
 
 # --------------------------------------------------------------------------- #

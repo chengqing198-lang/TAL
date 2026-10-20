@@ -433,6 +433,7 @@ UI 不是第二套实现：它把 spec 生成、`open_run` / `run_experiment`、
 | `tal/ui/jobs.py` | 后台线程任务 + 轮询状态 + 定向日志 |
 | `tal/ui/server.py` | `ThreadingHTTPServer`，JSON API + 三个静态文件 |
 | `tal/ui/static/` | 单页前端：原生 JS、无构建、DOM 构造避免注入 |
+| `tal/interpret.py` | 层间透视：拒答方向、logit lens、基座/消融对比、逐层方向扫描 |
 
 ### 13.2 关键取舍
 
@@ -453,7 +454,27 @@ UI 不是第二套实现：它把 spec 生成、`open_run` / `run_experiment`、
 - **任务与 HTTP 解耦**：耗时操作全部进 `JobManager`，HTTP 只返回 job id；页面每 1.5 秒轮询，
   刷新页面不会丢任务。
 
-### 13.3 安全边界
+### 13.3 层间透视（`interpret.py`）
+
+这一页回答的是“模型内部发生了什么”，而不是“门禁过没过”。它复用评测器的权重加载与显存
+预检，但独立于实验 DAG，不创建新的 run：
+
+1. 对每个 token 位置取最后一层 hidden state，分别对 harmful / harmless 对照求均值，差值
+   L2 归一化得到每层的“拒答方向”。
+2. 计算该请求 hidden 在方向上的 `projection`，再用相对 harmless 分布的 `cosine` z-score
+   消除残差范数随深度增长的影响；`z≥1` 粗略标为起始层，最大值标为峰值层。
+3. 用最终 `norm + lm_head` 做 logit lens，读每层 top token 与拒答/合规 token 质量。
+4. 若指定一个已完成的消融 run，重新加载其导出权重，逐层比较 `Δprojection`；负值表示更
+   远离基座估计的拒答方向。
+5. 可选 `sweep`：每次只 hook 一层、减去该层方向，再读末层投影变化。它是单方向干预，不是
+   full circuit 证明。
+
+结果落在 `ui-data/interpret/layers-*.json`，包含每层数据与 `onset/peak/ablation/sweep`
+汇总，页面用原生 SVG 画 z 折线和 Δ投影柱。0.6B 的实测显示峰值在 L21，而 ditch 导出从
+L16 起、L28 前都出现负 Δ——这与“编辑器只改后段 attention/MLP”一致，但不能反过来证明
+L21 就是拒答层。
+
+### 13.4 安全边界
 
 - 默认仅绑定 `127.0.0.1`；**没有鉴权、没有 CSRF token**，因为威胁模型是“本机单用户”。
   绑定非 loopback 时启动会打警告，但不会阻止——使用者需自己加反向代理与鉴权。
@@ -472,12 +493,13 @@ UI 不是第二套实现：它把 spec 生成、`open_run` / `run_experiment`、
 python -m unittest discover -s tests -v
 ```
 
-57 个用例：统计区间与配对 bootstrap；spec 加载、覆盖、校验与指纹阶段隔离；三段
+67 个用例：统计区间与配对 bootstrap；spec 加载、覆盖、校验与指纹阶段隔离；三段
 切分互不重叠、manifest 计数与重载稳定；`--dry-run` 全链路、二次运行全缓存、门禁失败
 （exit 10 / `gate_failed`）与 `--only-stage` 依赖检查；Heretic TOML 可被 `tomllib`
 解析且 scorer/modifier 表路径正确；ditch 的 GGUF/eval_path 校验、argv 与 HF 产物提升；
-audit 的 track/compass 参数与 manifest 对齐；UI 工作区物化、spec 生成、后台任务与模拟
-客户端；真实 HTTP 服务上的 state/chat/experiment/report；HF 评测加载前的显存/内存预检。
+audit 的 track/compass 参数与 manifest 对齐；层间透视的路径解析、prompt 渲染、方向/
+汇总/合并与缺产物报错；UI 工作区物化、spec 生成、后台任务与模拟客户端；真实 HTTP
+服务上的 state/chat/experiment/report/interpret；HF 评测加载前的显存/内存预检。
 
 测试刻意不依赖 pytest/网络；HF 评测器与上游 CLI 的真实调用另由 `smoke/qwen06-ditch.yaml`
 覆盖过一遍（Qwen3-0.6B，2026-10，见 README 的 ditch 章节与 `runs/` 下的报告）。UI 的
@@ -496,3 +518,4 @@ HTTP 路由用 `ThreadingHTTPServer` 在随机端口上真实起服测试，但�
 - [ ] `gates.json`（含 `enforced` 与 elapsed）
 - [ ] `report.md` / `report.json` / `model_card.md`
 - [ ] 模型导出目录与许可说明
+
